@@ -1,0 +1,54 @@
+{
+  "taxi-geo": {
+    "properties": {
+      "dropoffLocation": {
+        "properties": {
+          "location": {
+            "type": "geo_point",
+            "lat_lon" : "true"
+          }
+        }
+      },
+      "dropoff_datetime": {
+        "type": "date",
+        "format": "dateOptionalTime"
+      },
+      "hack_license": {
+        "type": "string"
+      },
+      "medallion": {
+        "type": "string"
+      },
+      "passenger_count": {
+        "type": "long"
+      },
+      "pickupLocation": {
+        "properties": {
+          "location": {
+            "type": "geo_point",
+            "lat_lon" : "true"
+          }
+        }
+      },
+      "pickup_datetime": {
+        "type": "date",
+        "format": "dateOptionalTime"
+      },
+      "rate_code": {
+        "type": "long"
+      },
+      "store_fwd_flag": {
+        "type": "string"
+      },
+      "trip_distance": {
+        "type": "double"
+      },
+      "trip_time_in_seconds": {
+        "type": "long"
+      },
+      "vendor_id": {
+        "type": "string"
+      }
+    }
+  }
+}
