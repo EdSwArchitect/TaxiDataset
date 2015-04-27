@@ -3,6 +3,8 @@ package ekb.elastic.ingest;
 import junit.framework.TestCase;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.ImmutableSettings;
@@ -19,6 +21,8 @@ import org.slf4j.LoggerFactory;
 public class LoaderTest extends TestCase {
     private Client client;
     private Logger log = LoggerFactory.getLogger(LoaderTest.class);
+
+
 
     /**
      *
@@ -37,15 +41,26 @@ public class LoaderTest extends TestCase {
      */
     public void tearDown() throws Exception {
 
-        DeleteIndexResponse delete = client.admin().indices().delete(new DeleteIndexRequest("test-index")).actionGet();
+        IndicesExistsRequest ier = new IndicesExistsRequest("test_index");
 
-        log.info("Delete of test-index isAcknowledged? " + delete.isAcknowledged());
+        IndicesExistsResponse resp = client.admin().indices().exists(ier).actionGet();
 
-        delete = client.admin().indices().delete(new DeleteIndexRequest("test-index2")).actionGet();
+        if (resp.isExists()) {
 
-        Thread.sleep(1000*5);
+            DeleteIndexResponse delete = client.admin().indices().delete(new DeleteIndexRequest("test_index")).actionGet();
 
-        log.info("Delete of test-index2 isAcknowledged? " + delete.isAcknowledged());
+            log.info("Delete of test-index isAcknowledged? " + delete.isAcknowledged());
+        }
+
+        ier = new IndicesExistsRequest("anotherindex");
+        resp = client.admin().indices().exists(ier).actionGet();
+
+        if (resp.isExists()) {
+
+            DeleteIndexResponse delete = client.admin().indices().delete(new DeleteIndexRequest("anotherindex")).actionGet();
+
+            log.info("Delete of test-index2 isAcknowledged? " + delete.isAcknowledged());
+        }
 
         client.close();
     }
@@ -57,7 +72,7 @@ public class LoaderTest extends TestCase {
     @Test
     public void testParseFile() throws Exception {
         log.info("testParseFile");
-        Loader loader = new Loader("src/test/resources/test_trip_data.csv", 100);
+//        Loader loader = new Loader("src/test/resources/test_trip_data.csv", 100);
 
 //        loader.closeLoader();
     }
@@ -71,42 +86,42 @@ public class LoaderTest extends TestCase {
         Loader loader = new Loader();
         Client client = loader.connectES();
 
-        boolean created = loader.createIndex(client, "test-index", "test", "testme");
+        boolean created = loader.createIndex(client, "test_index", "testme");
 
         log.info("Test-index created? " + created);
+        Assert.assertTrue("Expected the index 'test-index' to be created", created);
 
-        Thread.sleep(1000 * 5);
+        boolean exists = loader.indexExists(client, "test_index");
 
-//        loader.closeLoader();
+        Assert.assertTrue("Expected the index 'test-index' to exist", exists);
 
         client.close();
-        Assert.assertTrue("Expected the index 'test-index' to be created", created);
     }
 
     /**
      *
      * @throws Exception
      */
-    @Test
+//    @Test
     public void testIndexExists() throws Exception {
         log.info("testIndexExists");
 
         Loader loader = new Loader();
         Client client = loader.connectES();
 
-        boolean created = loader.createIndex(client, "test-index2", "test", "testme2");
+        boolean created = loader.createIndex(client, "anotherindex", null);
 
-        log.info("test-index2 created? " + created);
+        log.info("anotherindex created? " + created);
 
-        Thread.sleep(1000 * 5);
+        boolean exists = loader.indexExists(client, "anotherindex");
 
-        boolean exists = loader.indexExists(client, "test-index2");
+        log.info("anotherindex exists? " + exists);
 
-        log.info("test-index2 exists? " + exists);
+        client.close();
 
 //        loader.closeLoader();
 
-        Assert.assertTrue("Expected the index 'test-index2' to exist", exists);
+//        Assert.assertTrue("Expected the index 'anotherindex' to exist", exists);
     }
 
     /**

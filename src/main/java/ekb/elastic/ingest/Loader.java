@@ -5,12 +5,12 @@ import au.com.bytecode.opencsv.CSVReader;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesResponse;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequestBuilder;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
-import org.elasticsearch.action.exists.ExistsRequest;
-import org.elasticsearch.action.exists.ExistsResponse;
 import org.elasticsearch.client.AdminClient;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
@@ -130,11 +130,10 @@ public class Loader {
      *
      * @param client
      * @param index
-     * @param indexType
      * @param alias
      * @return
      */
-    public boolean createIndex(Client client, String index, String indexType, String alias) {
+    public boolean createIndex(Client client, String index, String alias) {
         boolean created = false;
 
         AdminClient admin = client.admin();
@@ -142,9 +141,11 @@ public class Loader {
 
         CreateIndexResponse cresp = admin.indices().create(cir).actionGet();
 
-        System.out.println("Response: " + cresp.isAcknowledged());
+        log.info("Response for create index '" + index + "': " + cresp.isAcknowledged());
 
-        if (cresp.isAcknowledged()) {
+        created = cresp.isAcknowledged();
+
+        if (cresp.isAcknowledged() && alias != null) {
             IndicesAliasesResponse iar = admin.indices().prepareAliases().addAlias(index, alias).get();
 
             created = iar.isAcknowledged();
@@ -158,29 +159,24 @@ public class Loader {
      *
      * @param client
      * @param index
-     * @param indexType
      * @param alias
      * @param mapping
      * @return
      */
-    public boolean createIndex(Client client, String index, String indexType, String alias, String mapping) {
+    public boolean createIndex(Client client, String index, String alias, String mapping) {
         boolean created = false;
 
         AdminClient admin = client.admin();
-//
-//        GetIndexRequest gir = admin.indices().prepareGetIndex().addIndices(index).request();
-//
-//        GetIndexResponse giresp  = admin.indices().getIndex(gir).actionGet();
-//
-//        giresp.
 
         CreateIndexRequest cir = admin.indices().prepareCreate(index).request();
 
         CreateIndexResponse cresp = admin.indices().create(cir).actionGet();
 
-        System.out.println("Response: " + cresp.isAcknowledged());
+        log.info("Response for creating index '" + index + "': " + cresp.isAcknowledged());
 
-        if (cresp.isAcknowledged()) {
+        created = cresp.isAcknowledged();
+
+        if (created && alias != null) {
             IndicesAliasesResponse iar = admin.indices().prepareAliases().addAlias(index, alias).get();
 
             created = iar.isAcknowledged();
@@ -192,10 +188,10 @@ public class Loader {
         PutMappingResponse pmr = admin.indices().putMapping(pmrb.request()).actionGet();
 
         if (pmr.isAcknowledged()) {
-            System.out.println("\t\tMapping set");
+            log.info("\t\tMapping set");
         }
         else {
-            System.out.println("\t\tMapping not set!");
+            log.info("\t\tMapping not set!");
         }
 
 
@@ -210,11 +206,13 @@ public class Loader {
      */
     public boolean indexExists(Client client, String index) {
 
-        ExistsResponse resp = client.exists(new ExistsRequest(index)).actionGet();
+        IndicesExistsRequest ier = new IndicesExistsRequest(index);
 
-        log.info("Index exists from index '" + index + "' returns " + resp.exists());
+        IndicesExistsResponse resp = client.admin().indices().exists(ier).actionGet();
 
-        return resp.exists();
+        log.info("Index exists from index '" + index + "' returns " + resp.isExists());
+
+        return resp.isExists();
     }
 
     /**
@@ -392,7 +390,7 @@ public class Loader {
 
                 CharBuffer mapping = utf8.decode(mappedByteBuffer);
 
-                boolean created = loader.createIndex(client, "taxi-geo", "taxi-geo", "taxigeo", mapping.toString());
+                boolean created = loader.createIndex(client, "taxi-geo", "taxigeo", mapping.toString());
                 channel.close();
             }
 
