@@ -246,8 +246,6 @@ public class Loader {
         Double downLong;
         Double downLat;
 
-
-
         for (String[] taxi : list) {
             try {
                 upLong = Double.parseDouble(taxi[11]);
