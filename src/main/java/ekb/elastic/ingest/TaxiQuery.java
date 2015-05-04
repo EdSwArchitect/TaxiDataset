@@ -1,15 +1,20 @@
 package ekb.elastic.ingest;
 
 import org.apache.commons.cli.*;
+import org.apache.commons.cli.ParseException;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogram;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.aggregations.metrics.max.Max;
 import org.elasticsearch.search.aggregations.metrics.min.Min;
 import org.slf4j.Logger;
@@ -17,6 +22,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.text.*;
+import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -24,13 +31,13 @@ import java.util.concurrent.ExecutionException;
  */
 public class TaxiQuery {
     private static Logger log = LoggerFactory.getLogger(TaxiQuery.class);
+    public static SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
 
     public TaxiQuery() {
 
     }
 
     /**
-     *
      * @param client
      * @param index
      * @return
@@ -40,28 +47,28 @@ public class TaxiQuery {
 
         TaxiStats rez = null;
         try {
-        SearchRequestBuilder srb = client.prepareSearch(index)
-                .setQuery(QueryBuilders.matchAllQuery()).
-                        addAggregation(AggregationBuilders.max("pickup_max").field("pickup_datetime")).
-                        addAggregation(AggregationBuilders.min("pickup_min").field("pickup_datetime")).
-                        addAggregation(AggregationBuilders.max("dropoff_max").field("dropoff_datetime")).
-                        addAggregation(AggregationBuilders.min("dropoff_min").field("dropoff_datetime"));
+            SearchRequestBuilder srb = client.prepareSearch(index)
+                    .setQuery(QueryBuilders.matchAllQuery()).
+                            addAggregation(AggregationBuilders.max("pickup_max").field("pickup_datetime")).
+                            addAggregation(AggregationBuilders.min("pickup_min").field("pickup_datetime")).
+                            addAggregation(AggregationBuilders.max("dropoff_max").field("dropoff_datetime")).
+                            addAggregation(AggregationBuilders.min("dropoff_min").field("dropoff_datetime"));
 
-        SearchResponse resp = null;
+            SearchResponse resp = null;
             resp = srb.execute().get();
 
-        log.info("Rest status: " + resp.status().getStatus());
+            log.info("Rest status: " + resp.status().getStatus());
 
-        if (resp.status().getStatus() == 200) {
-            Max upmax = resp.getAggregations().get("pickup_max");
-            Max offmax = resp.getAggregations().get("dropoff_max");
-            Min upmin = resp.getAggregations().get("pickup_min");
-            Min offmin = resp.getAggregations().get("dropoff_min");
+            if (resp.status().getStatus() == 200) {
+                Max upmax = resp.getAggregations().get("pickup_max");
+                Max offmax = resp.getAggregations().get("dropoff_max");
+                Min upmin = resp.getAggregations().get("pickup_min");
+                Min offmin = resp.getAggregations().get("dropoff_min");
 
-            rez = new TaxiStats((long)upmin.getValue(),
-                    (long)upmax.getValue(), (long)offmin.getValue(), (long)offmax.getValue());
+                rez = new TaxiStats((long) upmin.getValue(),
+                        (long) upmax.getValue(), (long) offmin.getValue(), (long) offmax.getValue());
 
-        } // if (resp.status().getStatus() == 200) {
+            } // if (resp.status().getStatus() == 200) {
         }
         catch (InterruptedException e) {
             StringWriter sw = new StringWriter();
@@ -69,7 +76,7 @@ public class TaxiQuery {
             e.printStackTrace(pw);
             log.error(sw.toString());
 
-            throw new TaxiQueryException("Failure in query to elasticsearch" , e);
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
         }
         catch (ExecutionException e) {
             StringWriter sw = new StringWriter();
@@ -77,13 +84,102 @@ public class TaxiQuery {
             e.printStackTrace(pw);
             log.error(sw.toString());
 
-            throw new TaxiQueryException("Failure in query to elasticsearch" , e);
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
         }
 
         return rez;
     }
 
-    public static void main(String ... args) {
+    /**
+     * @param client
+     * @param index
+     * @param startDate
+     * @param endDate
+     * @param interval
+     * @return
+     * @throws TaxiQueryException
+     */
+    public ArrayList<TaxiBucket> getInterval(Client client, String[] index,
+                                             String startDate, String endDate, int interval) throws TaxiQueryException {
+        ArrayList<TaxiBucket> list = new ArrayList<TaxiBucket>();
+        try {
+
+            RangeQueryBuilder rangeQuery = QueryBuilders.rangeQuery("pickup_datetime").
+                    from(sdf.parse(startDate)).to(sdf.parse(endDate));
+
+            SearchRequestBuilder srb = client.prepareSearch(index)
+                    .setQuery(rangeQuery).setSearchType(SearchType.COUNT).
+                            addAggregation(AggregationBuilders.dateHistogram("histogram").
+                                    subAggregation(AggregationBuilders.terms("cabbies").field("hack_license")).
+                                    interval(DateHistogram.Interval.minutes(interval)).
+                                    field("pickup_datetime"));
+
+            SearchResponse resp = null;
+            resp = srb.execute().get();
+
+            log.info("Rest status: " + resp.status().getStatus());
+
+            if (resp.status().getStatus() == 200) {
+                log.info("Total hits in range: " + resp.getHits().totalHits());
+
+                DateHistogram agg = resp.getAggregations().get("histogram");
+
+                log.info("list size: " + agg.getBuckets().size());
+
+                for (DateHistogram.Bucket entry : agg.getBuckets()) {
+
+
+                    String key = entry.getKey();
+
+                    long count = entry.getDocCount();
+                    log.info("\tDate: " + key + " Count: " + count);
+
+                    Terms terms = entry.getAggregations().get("cabbies");
+
+                    for (Terms.Bucket tentry : terms.getBuckets()) {
+                        log.info("\t\t Term key: " + tentry.getKey());
+                        log.info("\t\t Term key count: " + tentry.getDocCount());
+
+                        TaxiBucket tb = new TaxiBucket();
+                        tb.setIntervalTime(interval);
+                        tb.setMedallion(tentry.getKey());
+                        tb.setIntervalTime(entry.getKeyAsDate().getMillis());
+
+                        list.add(tb);
+                    }
+
+                } // for (DateHistogram.Bucket entry : agg.getBuckets()) {
+            } // if (resp.status().getStatus() == 200) {
+        }
+        catch (InterruptedException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
+        }
+        catch (ExecutionException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
+        }
+        catch (java.text.ParseException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in date format", e);
+        }
+
+        return list;
+    }
+
+    public static void main(String... args) {
 
         Options options = new Options();
         HelpFormatter help = new HelpFormatter();
@@ -102,10 +198,19 @@ public class TaxiQuery {
             indexOpt.setArgs(1);
             indexOpt.setRequired(true);
 
+            Option pickupTimeOpt = new Option("u", "pickup", true, "The pickup time");
+            pickupTimeOpt.setArgs(1);
+            pickupTimeOpt.setRequired(true);
+            Option dropTimeOpt = new Option("d", "dropoff", true, "The dropoff time");
+            dropTimeOpt.setArgs(1);
+            dropTimeOpt.setRequired(true);
+
             options.addOption(hostOpt);
             options.addOption(portOpt);
             options.addOption(clusterOpt);
             options.addOption(indexOpt);
+            options.addOption(pickupTimeOpt);
+            options.addOption(dropTimeOpt);
 
             GnuParser parser = new GnuParser();
             CommandLine cmd = parser.parse(options, args);
@@ -122,30 +227,15 @@ public class TaxiQuery {
 
             log.info("Results:\n" + stats.toDateString());
 
+            sdf.parse(cmd.getOptionValue("u"));
+            sdf.parse(cmd.getOptionValue("d"));
 
-//            SearchRequestBuilder srb = client.prepareSearch(cmd.getOptionValues("i"))
-//                    .setQuery(QueryBuilders.matchAllQuery()).
-//                            addAggregation(AggregationBuilders.max("pickup_max").field("pickup_datetime")).
-//                            addAggregation(AggregationBuilders.min("pickup_min").field("pickup_datetime")).
-//                            addAggregation(AggregationBuilders.max("dropoff_max").field("dropoff_datetime")).
-//                            addAggregation(AggregationBuilders.min("dropoff_min").field("dropoff_datetime"));
-//
-//            SearchResponse resp = srb.execute().get();
-//
-//            log.info("Rest status: " + resp.status().getStatus());
-//
-//            if (resp.status().getStatus() == 200) {
-//                Max upmax = resp.getAggregations().get("pickup_max");
-//                Max offmax = resp.getAggregations().get("dropoff_max");
-//                Min upmin = resp.getAggregations().get("pickup_min");
-//                Min offmin = resp.getAggregations().get("dropoff_min");
-//
-//                log.info("first pickup: " + new Date((long)upmin.getValue()));
-//                log.info("last pickup: " + new Date((long)upmax.getValue()));
-//                log.info("first dropoff: " + new Date((long)offmin.getValue()));
-//                log.info("last dropoff: " + new Date((long)offmax.getValue()));
-//
-//            } // if (resp.status().getStatus() == 200) {
+            // 2013-01-01T10:10:00
+
+            ArrayList<TaxiBucket> list = tq.getInterval(client, cmd.getOptionValues("index"),
+                    cmd.getOptionValue("u"), cmd.getOptionValue("d"), 60);
+
+            log.info("List size is: " + list.size());
 
             client.close();
 
@@ -160,6 +250,12 @@ public class TaxiQuery {
 
         }
         catch (TaxiQueryException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+        }
+        catch (java.text.ParseException e) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             e.printStackTrace(pw);
