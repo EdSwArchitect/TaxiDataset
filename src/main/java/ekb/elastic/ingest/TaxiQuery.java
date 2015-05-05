@@ -1,17 +1,10 @@
 package ekb.elastic.ingest;
 
-import org.apache.commons.cli.*;
-import org.apache.commons.cli.ParseException;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
-import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.index.query.RangeQueryBuilder;
+import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogram;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
@@ -22,7 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.text.*;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.concurrent.ExecutionException;
 
@@ -179,87 +172,205 @@ public class TaxiQuery {
         return list;
     }
 
-    public static void main(String... args) {
-
-        Options options = new Options();
-        HelpFormatter help = new HelpFormatter();
+    /**
+     *
+     * @param client
+     * @param index
+     * @param medallion
+     * @return
+     * @throws TaxiQueryException
+     */
+    public long getFareCount(Client client, String[] index, String medallion) throws TaxiQueryException {
+        long count = 0;
 
         try {
-            Option hostOpt = new Option("h", "host", true, "ElasticSearch URL");
-            hostOpt.setArgs(1);
-            hostOpt.setRequired(true);
-            Option portOpt = new Option("p", "port", true, "ElasticSearch URL");
-            portOpt.setArgs(1);
-            portOpt.setRequired(true);
-            Option clusterOpt = new Option("c", "cluster", true, "Cluster");
-            clusterOpt.setArgs(1);
-            clusterOpt.setRequired(true);
-            Option indexOpt = new Option("i", "index", true, "The index");
-            indexOpt.setArgs(1);
-            indexOpt.setRequired(true);
+            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
 
-            Option pickupTimeOpt = new Option("u", "pickup", true, "The pickup time");
-            pickupTimeOpt.setArgs(1);
-            pickupTimeOpt.setRequired(true);
-            Option dropTimeOpt = new Option("d", "dropoff", true, "The dropoff time");
-            dropTimeOpt.setArgs(1);
-            dropTimeOpt.setRequired(true);
+            TermQueryBuilder medallianQuery = QueryBuilders.termQuery("medallion", medallion);
 
-            options.addOption(hostOpt);
-            options.addOption(portOpt);
-            options.addOption(clusterOpt);
-            options.addOption(indexOpt);
-            options.addOption(pickupTimeOpt);
-            options.addOption(dropTimeOpt);
+            boolQuery = boolQuery.must(medallianQuery);
 
-            GnuParser parser = new GnuParser();
-            CommandLine cmd = parser.parse(options, args);
+            MatchQueryBuilder matchQuery = QueryBuilders.matchQuery("medallion", medallion);
 
-            Settings settings = ImmutableSettings.settingsBuilder()
-                    .put("cluster.name", cmd.getOptionValue('c')).build();
-            Client client = new TransportClient(settings).
-                    addTransportAddress(new InetSocketTransportAddress(cmd.getOptionValue('h'),
-                            Integer.parseInt(cmd.getOptionValue('p'))));
+            SearchRequestBuilder srb = client.prepareSearch(index)
+                    .setQuery(matchQuery).setSearchType(SearchType.COUNT);
 
-            TaxiQuery tq = new TaxiQuery();
+            log.warn(">>>>>> QUERY TEXT: " + srb.toString());
 
-            TaxiStats stats = tq.getTaxiStats(client, cmd.getOptionValues("i"));
+            SearchResponse resp = null;
+            resp = srb.execute().get();
 
-            log.info("Results:\n" + stats.toDateString());
+            log.info("Rest status: " + resp.status().getStatus());
 
-            sdf.parse(cmd.getOptionValue("u"));
-            sdf.parse(cmd.getOptionValue("d"));
+            if (resp.status().getStatus() == 200) {
+                log.info("Total hits in range: " + resp.getHits().totalHits());
 
-            // 2013-01-01T10:10:00
+                count = resp.getHits().totalHits();
 
-            ArrayList<TaxiBucket> list = tq.getInterval(client, cmd.getOptionValues("index"),
-                    cmd.getOptionValue("u"), cmd.getOptionValue("d"), 60);
-
-            log.info("List size is: " + list.size());
-
-            client.close();
-
+            } // if (resp.status().getStatus() == 200) {
         }
-        catch (ParseException pe) {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-
-            help.printUsage(pw, 80, TaxiQuery.class.getName(), options);
-
-            log.error(sw.toString());
-
-        }
-        catch (TaxiQueryException e) {
+        catch (InterruptedException e) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             e.printStackTrace(pw);
             log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
+        }
+        catch (ExecutionException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
+        }
+
+        return count;
+    }
+
+    public long getFareCount(Client client, String[] index, String medallion,
+                                             String startDate, String endDate) throws TaxiQueryException {
+        long count = 0;
+
+        try {
+
+            BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
+
+            RangeQueryBuilder rangeQuery = QueryBuilders.rangeQuery("pickup_datetime").
+                    from(sdf.parse(startDate)).to(sdf.parse(endDate));
+
+            boolQuery = boolQuery.must(rangeQuery);
+
+            MatchQueryBuilder medallianQuery = QueryBuilders.matchQuery("medallion", medallion);
+
+            boolQuery = boolQuery.must(medallianQuery);
+
+            SearchRequestBuilder srb = client.prepareSearch(index)
+                    .setQuery(boolQuery).setSearchType(SearchType.COUNT);
+
+            SearchResponse resp = null;
+            resp = srb.execute().get();
+
+            log.info("Rest status: " + resp.status().getStatus());
+
+            if (resp.status().getStatus() == 200) {
+                log.info("Total hits in range: " + resp.getHits().totalHits());
+
+                count = resp.getHits().totalHits();
+
+            } // if (resp.status().getStatus() == 200) {
+        }
+        catch (InterruptedException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
+        }
+        catch (ExecutionException e) {
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in query to elasticsearch", e);
         }
         catch (java.text.ParseException e) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             e.printStackTrace(pw);
             log.error(sw.toString());
+
+            throw new TaxiQueryException("Failure in date format", e);
         }
+
+        return count;
     }
+
+//
+//    public static void main(String... args) {
+//
+//        Options options = new Options();
+//        HelpFormatter help = new HelpFormatter();
+//
+//        try {
+//            Option hostOpt = new Option("h", "host", true, "ElasticSearch URL");
+//            hostOpt.setArgs(1);
+//            hostOpt.setRequired(true);
+//            Option portOpt = new Option("p", "port", true, "ElasticSearch URL");
+//            portOpt.setArgs(1);
+//            portOpt.setRequired(true);
+//            Option clusterOpt = new Option("c", "cluster", true, "Cluster");
+//            clusterOpt.setArgs(1);
+//            clusterOpt.setRequired(true);
+//            Option indexOpt = new Option("i", "index", true, "The index");
+//            indexOpt.setArgs(1);
+//            indexOpt.setRequired(true);
+//
+//            Option pickupTimeOpt = new Option("u", "pickup", true, "The pickup time");
+//            pickupTimeOpt.setArgs(1);
+//            pickupTimeOpt.setRequired(true);
+//            Option dropTimeOpt = new Option("d", "dropoff", true, "The dropoff time");
+//            dropTimeOpt.setArgs(1);
+//            dropTimeOpt.setRequired(true);
+//
+//            options.addOption(hostOpt);
+//            options.addOption(portOpt);
+//            options.addOption(clusterOpt);
+//            options.addOption(indexOpt);
+//            options.addOption(pickupTimeOpt);
+//            options.addOption(dropTimeOpt);
+//
+//            GnuParser parser = new GnuParser();
+//            CommandLine cmd = parser.parse(options, args);
+//
+//            Settings settings = ImmutableSettings.settingsBuilder()
+//                    .put("cluster.name", cmd.getOptionValue('c')).build();
+//            Client client = new TransportClient(settings).
+//                    addTransportAddress(new InetSocketTransportAddress(cmd.getOptionValue('h'),
+//                            Integer.parseInt(cmd.getOptionValue('p'))));
+//
+//            TaxiQuery tq = new TaxiQuery();
+//
+//            TaxiStats stats = tq.getTaxiStats(client, cmd.getOptionValues("i"));
+//
+//            log.info("Results:\n" + stats.toDateString());
+//
+//            sdf.parse(cmd.getOptionValue("u"));
+//            sdf.parse(cmd.getOptionValue("d"));
+//
+//            // 2013-01-01T10:10:00
+//
+//            ArrayList<TaxiBucket> list = tq.getInterval(client, cmd.getOptionValues("index"),
+//                    cmd.getOptionValue("u"), cmd.getOptionValue("d"), 60);
+//
+//            log.info("List size is: " + list.size());
+//
+//            client.close();
+//
+//        }
+//        catch (ParseException pe) {
+//            StringWriter sw = new StringWriter();
+//            PrintWriter pw = new PrintWriter(sw);
+//
+//            help.printUsage(pw, 80, TaxiQuery.class.getName(), options);
+//
+//            log.error(sw.toString());
+//
+//        }
+//        catch (TaxiQueryException e) {
+//            StringWriter sw = new StringWriter();
+//            PrintWriter pw = new PrintWriter(sw);
+//            e.printStackTrace(pw);
+//            log.error(sw.toString());
+//        }
+//        catch (java.text.ParseException e) {
+//            StringWriter sw = new StringWriter();
+//            PrintWriter pw = new PrintWriter(sw);
+//            e.printStackTrace(pw);
+//            log.error(sw.toString());
+//        }
+//    }
 }

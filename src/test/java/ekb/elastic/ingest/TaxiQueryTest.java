@@ -71,4 +71,33 @@ public class TaxiQueryTest {
         Assert.assertEquals("Size is know and you didn't get it", 210, list.size());
 
     }
+
+    @Test
+    public void testGetFareCount() throws Exception {
+        String[] indices = { "taxi-geo" };
+        TaxiQuery tq = new TaxiQuery();
+
+        //  "2013-01-03T10:10:00"  --dropoff "2013-01-03T23:10:00"
+
+        long count = tq.getFareCount(client, indices, "7896788B80BC3AD1CC9A188414181C92");
+
+        log.info("Count is: " + count);
+
+        Assert.assertEquals("Must be this value", 4895, count);
+    }
+
+    @Test
+    public void testGetFareCount2() throws Exception {
+        String[] indices = { "taxi-geo" };
+        TaxiQuery tq = new TaxiQuery();
+
+        //  "2013-01-03T10:10:00"  --dropoff "2013-01-03T23:10:00"
+
+        long count = tq.getFareCount(client, indices, "7896788B80BC3AD1CC9A188414181C92", "2013-01-26T02:00:00",
+                "2013-01-26T04:00:00");
+
+        log.info("Count is: " + count);
+
+        Assert.assertEquals("Must be this value", 6, count);
+    }
 }
